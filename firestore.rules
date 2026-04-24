@@ -21,5 +21,15 @@ service cloud.firestore {
         allow read, write: if isSignedIn() && request.auth.uid == userId;
       }
     }
+
+    match /config/userGroups {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    match /config/progress {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
   }
 }

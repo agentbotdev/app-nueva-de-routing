@@ -316,6 +316,7 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
     <div id="auth-section" style="display: flex; align-items: center; gap: 8px;">
         <button id="login-btn" class="toggle-btn active">ENTRAR</button>
         <div id="user-info" style="display:none; align-items: center; gap: 6px;">
+            <span id="group-badge"></span>
             <span id="user-name" style="font-size: 0.7rem; font-weight: 900; color: var(--accent-green);"></span>
             <button id="logout-btn" class="btn-circle" style="width: 28px; height: 28px; font-size: 11px; cursor: pointer;">✕</button>
         </div>
@@ -348,6 +349,26 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
             <div class="progress-bar-bg"><div class="progress-bar-fill" id="p-fill"></div></div>
         </div>
 
+        <div id="dual-progress" style="display:none; margin-bottom:14px;">
+            <div style="font-size:0.6rem; font-weight:900; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;">Progreso Zonas</div>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+                <div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                        <span style="font-size:0.65rem; font-weight:900; color:var(--accent-blue);">ZONA A</span>
+                        <span id="prog-a-text" style="font-size:0.65rem; color:var(--muted);">–</span>
+                    </div>
+                    <div class="progress-bar-bg"><div id="prog-a-fill" class="progress-bar-fill" style="background:var(--accent-blue); width:0%;"></div></div>
+                </div>
+                <div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                        <span style="font-size:0.65rem; font-weight:900; color:var(--accent-violet);">ZONA B</span>
+                        <span id="prog-b-text" style="font-size:0.65rem; color:var(--muted);">–</span>
+                    </div>
+                    <div class="progress-bar-bg"><div id="prog-b-fill" class="progress-bar-fill" style="background:var(--accent-violet); width:0%;"></div></div>
+                </div>
+            </div>
+        </div>
+
         <div id="scroll-area">
             <div class="section-label">👉 Próxima Parada</div>
             <div id="next-visit"></div>
@@ -376,7 +397,8 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-    import { getFirestore, doc, setDoc, collection, getDocs, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+    import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+    import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
     // --- CONFIGURACIÓN FIREBASE ---
     const FIREBASE_CONFIG = {
@@ -391,6 +413,7 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
     // Validar configuración
     const isFirebaseConfigured = Object.values(FIREBASE_CONFIG).every(v => v !== "");
     const FIRESTORE_DB_ID = "ai-studio-bf2b1214-075f-40f6-8720-0e7838a7f09c";
+    const RTDB_URL = ""; // Completar con URL de Realtime Database: https://{project}-default-rtdb.firebaseio.com
 
     // --- CONSTANTES ---
     const BATCH_SIZE = 15;
@@ -414,17 +437,34 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
     const shopNames = ["Corte & Barba", "Salón Buenos Aires", "Estilo Urbano", "La Tijera de Oro", "Arte en Cabello", "Navaja & Peine", "Urban Cut", "Trendy Hair", "Peluquería VIP", "Mundo Estético"];
     const streetNames = ["Av. Santa Fe", "Av. Córdoba", "Av. Corrientes", "Av. Callao", "Aguero", "Guatemala", "Honduras", "Paraguay", "Arenales", "Juncal"];
 
+    // Seeded PRNG (mulberry32) — mismo resultado en cada carga de página
+    let _seed = 42;
+    const seededRand = () => {
+        _seed |= 0; _seed = _seed + 0x6D2B79F5 | 0;
+        let t = Math.imul(_seed ^ _seed >>> 15, 1 | _seed);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+
     for(let i = 0; i < 245; i++) {
         const nb = nbCities[i % nbCities.length];
-        const lat = nb.center.lat + (Math.random() - 0.5) * 0.035;
-        const lng = nb.center.lng + (Math.random() - 0.5) * 0.035;
+        const lat = nb.center.lat + (seededRand() - 0.5) * 0.035;
+        const lng = nb.center.lng + (seededRand() - 0.5) * 0.035;
         RAW_INITIAL_DATA.push({
-            name: shopNames[Math.floor(Math.random() * shopNames.length)] + " #" + (i + 6),
-            addr: streetNames[Math.floor(Math.random() * streetNames.length)] + " " + (Math.floor(Math.random() * 4500) + 101),
+            name: shopNames[Math.floor(seededRand() * shopNames.length)] + " #" + (i + 6),
+            addr: streetNames[Math.floor(seededRand() * streetNames.length)] + " " + (Math.floor(seededRand() * 4500) + 101),
             lat, lng,
             type: i % 2 === 0 ? 'barbershop' : 'hairdresser'
         });
     }
+
+    // División geográfica: Grupo A = mitad oeste (lng menor), Grupo B = mitad este (lng mayor)
+    const _sorted = RAW_INITIAL_DATA.map((s, i) => ({ lng: s.lng, i })).sort((a, b) => a.lng - b.lng);
+    const _mid = Math.floor(RAW_INITIAL_DATA.length / 2);
+    const INITIAL_GROUP_SPLIT = {
+        A: new Set(_sorted.slice(0, _mid).map(x => x.i)),
+        B: new Set(_sorted.slice(_mid).map(x => x.i))
+    };
 
     // --- ESTADO GLOBAL ---
     let map, directionsService, placesService;
@@ -439,12 +479,13 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
         routeOrder: [],
         lastSearchTime: 0,
         userId: null,
+        userGroup: null,
         sessionStartTime: Date.now(),
         lastMapMoveTime: Date.now()
     };
 
     // --- FIREBASE LOGIC ---
-    let app, auth, db;
+    let app, auth, db, rtdb;
 
     if (!isFirebaseConfigured) {
         const banner = document.createElement('div');
@@ -455,8 +496,28 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
         app = initializeApp(FIREBASE_CONFIG);
         auth = getAuth(app);
         db = getFirestore(app, FIRESTORE_DB_ID);
+        if (RTDB_URL) rtdb = getDatabase(app, RTDB_URL);
     }
     const getSessionId = () => new Date().toISOString().split('T')[0];
+
+    async function assignUserGroup(uid, email) {
+        const configRef = doc(db, 'config', 'userGroups');
+        const snap = await getDoc(configRef);
+        const data = snap.exists() ? snap.data() : {};
+
+        if (data.A?.uid === uid) return 'A';
+        if (data.B?.uid === uid) return 'B';
+
+        if (!data.A) {
+            await setDoc(configRef, { A: { uid, email, assignedAt: Date.now() } }, { merge: true });
+            return 'A';
+        }
+        if (!data.B) {
+            await setDoc(configRef, { B: { uid, email, assignedAt: Date.now() } }, { merge: true });
+            return 'B';
+        }
+        return null;
+    }
 
     async function handleLogin() {
         if (!isFirebaseConfigured) return showToast("⚠ Modo local activo");
@@ -472,29 +533,52 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
         } catch (err) { console.error(err); }
     }
 
-    function updateAuthUI(user) {
+    async function updateAuthUI(user) {
         const overlay = document.getElementById('login-overlay');
         const userInfo = document.getElementById('user-info');
         const loginBtn = document.getElementById('login-btn');
         const userName = document.getElementById('user-name');
+        const groupBadge = document.getElementById('group-badge');
 
         if (user) {
+            const group = await assignUserGroup(user.uid, user.email || '');
+            if (!group) {
+                showToast('❌ Cupo completo: ya hay 2 usuarios activos');
+                await signOut(auth);
+                return;
+            }
+            state.userId = user.uid;
+            state.userGroup = group;
+            state.userName = user.displayName || `Zona ${group}`;
             overlay.style.display = 'none';
             userInfo.style.display = 'flex';
             loginBtn.style.display = 'none';
             userName.innerText = user.displayName ? user.displayName.split(' ')[0] : 'Admin';
-            state.userId = user.uid;
+
+            const groupColor = group === 'A' ? 'var(--accent-blue)' : 'var(--accent-violet)';
+            groupBadge.innerText = `ZONA ${group}`;
+            groupBadge.style.cssText = `display:inline-block; background:${groupColor}; color:white; padding:3px 8px; border-radius:8px; font-size:0.6rem; font-weight:900;`;
+
             startSync();
         } else {
             overlay.style.display = isFirebaseConfigured ? 'flex' : 'none';
             userInfo.style.display = 'none';
             loginBtn.style.display = 'inline';
+            if (groupBadge) groupBadge.style.display = 'none';
             if (!isFirebaseConfigured) {
                 loginBtn.innerText = "MODO LOCAL";
                 startSync();
             }
             state.userId = null;
+            state.userGroup = null;
         }
+    }
+
+    function isShopVisible(idx) {
+        const shop = state.raw[idx];
+        if (!state.userGroup) return true;
+        if (shop && (shop.source === 'places_api' || shop.source === 'firestore')) return true;
+        return INITIAL_GROUP_SPLIT[state.userGroup].has(idx);
     }
 
     if (isFirebaseConfigured) {
@@ -532,6 +616,8 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
         });
         recalculateRoute();
         showToast("☁️ Nube sincronizada");
+        listenProgress();
+        startPartnerTracking();
     }
 
     async function syncSessionUpdate() {
@@ -547,6 +633,86 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
             notes: state.notes,
             updatedAt: serverTimestamp()
         }, { merge: true });
+    }
+
+    // --- PUNTO 4: PANEL DE PROGRESO ---
+    async function syncProgressUpdate() {
+        if (!state.userId || !state.userGroup || !isFirebaseConfigured) return;
+        const myVisible = state.raw.filter((r, i) => isShopVisible(i)).length;
+        const myVisited = Object.keys(state.statuses).filter(i => isShopVisible(parseInt(i))).length;
+        setDoc(doc(db, 'config', 'progress'), {
+            [state.userGroup]: { count: myVisited, total: myVisible, uid: state.userId, lastUpdate: serverTimestamp() }
+        }, { merge: true }).catch(() => {});
+    }
+
+    let progressUnsubscribe = null;
+    function listenProgress() {
+        if (!isFirebaseConfigured) return;
+        if (progressUnsubscribe) progressUnsubscribe();
+        progressUnsubscribe = onSnapshot(doc(db, 'config', 'progress'), (snap) => {
+            if (!snap.exists()) return;
+            updateProgressUI(snap.data());
+        });
+    }
+
+    function updateProgressUI(data) {
+        const dual = document.getElementById('dual-progress');
+        if (!dual) return;
+        dual.style.display = 'block';
+        ['A', 'B'].forEach(g => {
+            const d = data[g];
+            if (!d) return;
+            const pct = d.total > 0 ? Math.round(d.count / d.total * 100) : 0;
+            const fill = document.getElementById(`prog-${g.toLowerCase()}-fill`);
+            const text = document.getElementById(`prog-${g.toLowerCase()}-text`);
+            if (fill) fill.style.width = pct + '%';
+            if (text) text.innerText = `${d.count}/${d.total} (${pct}%)`;
+        });
+    }
+
+    // --- PUNTO 5: GPS EN TIEMPO REAL ---
+    let partnerMarker = null;
+    let _lastRTDBWrite = 0;
+
+    function updateLocationInRTDB(loc) {
+        if (!rtdb || !state.userGroup) return;
+        const now = Date.now();
+        if (now - _lastRTDBWrite < 5000) return;
+        _lastRTDBWrite = now;
+        set(ref(rtdb, `locations/${state.userGroup}`), {
+            lat: loc.lat,
+            lng: loc.lng,
+            name: state.userName || `Zona ${state.userGroup}`,
+            group: state.userGroup,
+            lastSeen: now
+        }).catch(() => {});
+    }
+
+    function startPartnerTracking() {
+        if (!rtdb || !state.userGroup) return;
+        const partnerGroup = state.userGroup === 'A' ? 'B' : 'A';
+        onValue(ref(rtdb, `locations/${partnerGroup}`), (snapshot) => {
+            const data = snapshot.val();
+            if (!data) return;
+            if (Date.now() - data.lastSeen > 300000) return;
+            if (window.google && map) updatePartnerMarker(data);
+        });
+    }
+
+    function updatePartnerMarker(data) {
+        if (!window.google || !map) return;
+        const pos = new google.maps.LatLng(data.lat, data.lng);
+        const color = data.group === 'A' ? '#3b82f6' : '#a855f7';
+        if (!partnerMarker) {
+            partnerMarker = new google.maps.Marker({
+                position: pos, map, zIndex: 999,
+                icon: { path: google.maps.SymbolPath.CIRCLE, scale: 14, fillColor: color, fillOpacity: 0.95, strokeColor: 'white', strokeWeight: 3 },
+                label: { text: (data.name || `Z${data.group}`).split(' ')[0].substring(0, 6), color: 'white', fontSize: '9px', fontWeight: '900' },
+                title: `Zona ${data.group} — ${data.name || ''}`
+            });
+        } else {
+            partnerMarker.setPosition(pos);
+        }
     }
 
     // --- MAPS ---
@@ -642,8 +808,9 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
                     state.userLoc = loc;
                 }
                 updateUserMarker();
+                updateLocationInRTDB(loc);
             },
-            (err) => { 
+            (err) => {
                 dot.className = "dot error"; 
                 let msg = "Error GPS";
                 if (err.code === 1) {
@@ -729,7 +896,7 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
     function recalculateRoute() {
         if (!window.google || !map) return;
         
-        const pending = state.raw.map((r, i) => i).filter(i => !state.statuses[i]);
+        const pending = state.raw.map((r, i) => i).filter(i => !state.statuses[i] && isShopVisible(i));
         if(pending.length === 0) { state.routeOrder = []; render(); return; }
 
         let curr = state.userLoc || { lat: -34.5955, lng: -58.4014 };
@@ -784,10 +951,12 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
         markers.forEach(m => m.setMap(null));
         markers = [];
         state.raw.forEach((r, i) => {
+            if(!isShopVisible(i)) return;
             if(!state.showVisited && state.statuses[i]) return;
             const isNext = state.routeOrder[0] === i;
             const orderIdx = state.routeOrder.indexOf(i);
-            const color = state.statuses[i] ? getStatusColor(state.statuses[i]) : (r.type === 'barbershop' ? '#3b82f6' : '#a855f7');
+            const baseColor = state.userGroup === 'A' ? '#3b82f6' : state.userGroup === 'B' ? '#a855f7' : (r.type === 'barbershop' ? '#3b82f6' : '#a855f7');
+            const color = state.statuses[i] ? getStatusColor(state.statuses[i]) : baseColor;
             const label = state.statuses[i] ? getStatusEmoji(state.statuses[i]) : (orderIdx >= 0 ? orderIdx + 1 : '');
             
             markers.push(new CustomMarker(new google.maps.LatLng(r.lat, r.lng), map, {
@@ -808,7 +977,9 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
         state.routeOrder.slice(1).forEach(idx => cardList.appendChild(createCard(idx, false)));
         if(state.showVisited) {
             Object.keys(state.statuses).forEach(idx => {
-                if(!state.routeOrder.includes(parseInt(idx))) cardList.appendChild(createCard(parseInt(idx), false));
+                const i = parseInt(idx);
+                if(!isShopVisible(i)) return;
+                if(!state.routeOrder.includes(i)) cardList.appendChild(createCard(i, false));
             });
         }
         updateCounter();
@@ -823,7 +994,8 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
         card.id = `card-${idx}`;
         card.onclick = (e) => { if(!e.target.closest('button')) map.panTo({ lat: item.lat, lng: item.lng }); };
         
-        const badgeColor = status ? getStatusColor(status) : (item.type === 'barbershop' ? '#3b82f6' : '#a855f7');
+        const baseColor = state.userGroup === 'A' ? '#3b82f6' : state.userGroup === 'B' ? '#a855f7' : (item.type === 'barbershop' ? '#3b82f6' : '#a855f7');
+        const badgeColor = status ? getStatusColor(status) : baseColor;
         const orderIdx = state.routeOrder.indexOf(idx);
         const label = status ? getStatusEmoji(status) : (orderIdx >= 0 ? orderIdx + 1 : '');
         
@@ -845,8 +1017,29 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
     }
 
     window.toggleStatus = async (idx, s) => {
-        if(state.statuses[idx] === s) delete state.statuses[idx]; else state.statuses[idx] = s;
+        if (state.statuses[idx] === s) {
+            delete state.statuses[idx];
+            if (state.userId && isFirebaseConfigured) {
+                deleteDoc(doc(db, `users/${state.userId}/visits`, String(idx))).catch(() => {});
+            }
+        } else {
+            state.statuses[idx] = s;
+            if (state.userId && isFirebaseConfigured) {
+                const shop = state.raw[idx];
+                setDoc(doc(db, `users/${state.userId}/visits`, String(idx)), {
+                    status: s,
+                    visitedAt: serverTimestamp(),
+                    uid: state.userId,
+                    group: state.userGroup || null,
+                    shopName: shop.name,
+                    shopAddr: shop.addr,
+                    shopLat: shop.lat,
+                    shopLng: shop.lng
+                }, { merge: true }).catch(() => {});
+            }
+        }
         await syncSessionUpdate();
+        syncProgressUpdate();
         recalculateRoute();
         if(state.routeOrder.length > 0) {
             const next = state.raw[state.routeOrder[0]];
@@ -913,10 +1106,11 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
     function truncate(s, n) { return s.length > n ? s.substr(0, n-1) + '...' : s; }
     function showToast(m) { const t = document.getElementById('toast'); t.innerText = m; t.classList.add('visible'); setTimeout(() => t.classList.remove('visible'), 3000); }
     function updateCounter() {
-        const visited = Object.keys(state.statuses).length;
+        const myTotal = state.raw.filter((r, i) => isShopVisible(i)).length;
+        const visited = Object.keys(state.statuses).filter(i => isShopVisible(parseInt(i))).length;
         const pill = document.getElementById('counter');
-        pill.innerText = `${visited}/${state.raw.length} ✓`;
-        pill.classList.toggle('done', visited === state.raw.length);
+        pill.innerText = `${visited}/${myTotal} ✓`;
+        pill.classList.toggle('done', visited === myTotal && myTotal > 0);
     }
 </script>
 

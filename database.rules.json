@@ -1,0 +1,13 @@
+{
+  "rules": {
+    "locations": {
+      ".read": "auth != null",
+      "A": {
+        ".write": "auth != null"
+      },
+      "B": {
+        ".write": "auth != null"
+      }
+    }
+  }
+}
