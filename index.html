@@ -28,7 +28,7 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
 
 4. GOOGLE MAPS API KEY:
    Obtén una API Key en Google Cloud Console con los servicios "Maps JavaScript API"
-   y "Places API" habilitados. Reemplázala en el tag <script> al final del archivo.
+   y "Places API" habilitados. Configúrala en Vercel como VITE_GOOGLE_MAPS_API_KEY.
 
 5. HTTPS:
    Este archivo DEBE servirse vía HTTPS para que el GPS y el login de Google funcionen.
@@ -859,7 +859,8 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
     }
 </script>
 
-<!-- REEMPLAZAR 'TU_MAPS_API_KEY' por tu clave real para producción -->
-<script src="https://maps.googleapis.com/maps/api/js?key=TU_MAPS_API_KEY&libraries=geometry,places&callback=initMap" async defer></script>
+<!-- REPLACED: Static Google Maps script moved to React component -->
+<div id="root"></div>
+<script type="module" src="/src/main.tsx"></script>
 </body>
 </html>
