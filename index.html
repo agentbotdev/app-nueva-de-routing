@@ -540,7 +540,18 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
         const userName = document.getElementById('user-name');
         const groupBadge = document.getElementById('group-badge');
 
-        if (user) {
+        if (!user) {
+            overlay.style.display = isFirebaseConfigured ? 'flex' : 'none';
+            userInfo.style.display = 'none';
+            loginBtn.style.display = 'inline';
+            if (groupBadge) groupBadge.style.display = 'none';
+            if (!isFirebaseConfigured) { loginBtn.innerText = "MODO LOCAL"; startSync(); }
+            state.userId = null;
+            state.userGroup = null;
+            return;
+        }
+
+        try {
             const group = await assignUserGroup(user.uid, user.email || '');
             if (!group) {
                 showToast('❌ Cupo completo: ya hay 2 usuarios activos');
@@ -554,23 +565,17 @@ BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
             userInfo.style.display = 'flex';
             loginBtn.style.display = 'none';
             userName.innerText = user.displayName ? user.displayName.split(' ')[0] : 'Admin';
-
             const groupColor = group === 'A' ? 'var(--accent-blue)' : 'var(--accent-violet)';
             groupBadge.innerText = `ZONA ${group}`;
             groupBadge.style.cssText = `display:inline-block; background:${groupColor}; color:white; padding:3px 8px; border-radius:8px; font-size:0.6rem; font-weight:900;`;
-
             startSync();
-        } else {
-            overlay.style.display = isFirebaseConfigured ? 'flex' : 'none';
-            userInfo.style.display = 'none';
-            loginBtn.style.display = 'inline';
-            if (groupBadge) groupBadge.style.display = 'none';
-            if (!isFirebaseConfigured) {
-                loginBtn.innerText = "MODO LOCAL";
-                startSync();
-            }
-            state.userId = null;
-            state.userGroup = null;
+        } catch (err) {
+            console.error('Error en login:', err);
+            const msg = err.code === 'permission-denied'
+                ? '❌ Permiso denegado: publicá las reglas de Firestore'
+                : '❌ Error: ' + (err.message || 'intentá de nuevo');
+            showToast(msg);
+            await signOut(auth);
         }
     }
 
