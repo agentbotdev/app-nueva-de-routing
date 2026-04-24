@@ -1,0 +1,39 @@
+{
+  "entities": {
+    "Session": {
+      "title": "Daily Visit Session",
+      "description": "Statuses and notes for locations visited on a specific day",
+      "type": "object",
+      "properties": {
+        "statuses": { "type": "object", "description": "Map of local index/ID to status" },
+        "notes": { "type": "object", "description": "Map of local index/ID to note text" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Locale": {
+      "title": "Found Location",
+      "description": "A barber shop or hairdresser found via Places API",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "addr": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "type": { "type": "string" },
+        "place_id": { "type": "string" },
+        "source": { "type": "string" },
+        "addedAt": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/sessions/{date}": {
+      "schema": "Session",
+      "description": "Daily visit data for the current user"
+    },
+    "/locales/{placeId}": {
+      "schema": "Locale",
+      "description": "Global registry of discovered locations"
+    }
+  }
+}

@@ -1,0 +1,865 @@
+<!--
+BARBERÍA ROAD TRIP - CHECKLIST DE ACTIVACIÓN FINAL
+==================================================
+
+1. FIREBASE PROJECT:
+   - Crear un proyecto en https://console.firebase.google.com/
+   - Habilitar "Authentication" y activar el proveedor "Google".
+   - Crear una base de datos "Firestore" en modo producción.
+
+2. FIRESTORE SECURITY RULES:
+   Copia y pega estas reglas en la pestaña "Rules" de Firestore:
+
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       match /users/{userId} {
+         allow read, write: if request.auth != null && request.auth.uid == userId;
+         match /{document=**} {
+           allow read, write: if request.auth != null && request.auth.uid == userId;
+         }
+       }
+     }
+   }
+
+3. CONFIGURACIÓN FIREBASE:
+   Los valores abajo ya están pre-configurados para este entorno de desarrollo.
+   Para tu propio deploy, cámbialos por los de: Configuración del proyecto > Tus aplicaciones > Aplicación Web.
+
+4. GOOGLE MAPS API KEY:
+   Obtén una API Key en Google Cloud Console con los servicios "Maps JavaScript API"
+   y "Places API" habilitados. Reemplázala en el tag <script> al final del archivo.
+
+5. HTTPS:
+   Este archivo DEBE servirse vía HTTPS para que el GPS y el login de Google funcionen.
+==================================================
+-->
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Barbería Road Trip Pro</title>
+    <style>
+        :root {
+            --bg: #0a0a0a;
+            --surface: #1a1a1a;
+            --surface2: #2a2a2a;
+            --border: rgba(255, 255, 255, 0.1);
+            --text: #ffffff;
+            --muted: #a0a0a0;
+            --accent-blue: #3b82f6;
+            --accent-violet: #a855f7;
+            --accent-green: #22c55e;
+            --accent-yellow: #eab308;
+            --accent-red: #ef4444;
+            --header-h: 60px;
+        }
+
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body, html { 
+            margin: 0; padding: 0; height: 100dvh; 
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+            background: var(--bg); color: var(--text); overflow: hidden;
+        }
+
+        /* --- HEADER --- */
+        header {
+            position: fixed; top: 0; left: 0; width: 100%; height: var(--header-h);
+            background: rgba(10, 10, 10, 0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 16px; z-index: 1000;
+        }
+
+        .logo { display: flex; flex-direction: column; line-height: 1; }
+        .logo span:first-child { font-weight: 900; font-size: 0.9rem; letter-spacing: 1px; }
+        .logo span:last-child { font-size: 0.6rem; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; }
+        
+        .status-pills { display: flex; align-items: center; gap: 12px; }
+        .dot { 
+            width: 8px; height: 8px; border-radius: 50%; background: #444; 
+            transition: background 0.3s;
+        }
+        .dot.searching { background: var(--accent-yellow); animation: pulse 1.5s infinite; }
+        .dot.ok { background: var(--accent-green); }
+        .dot.fine { background: #10b981; box-shadow: 0 0 10px #10b981; }
+        .dot.error { background: var(--accent-red); }
+        .acc-text { font-size: 0.6rem; color: var(--muted); font-weight: 700; line-height: 1.2; text-transform: uppercase; }
+
+        .pill-counter {
+            background: var(--surface2); padding: 6px 14px; border-radius: 20px;
+            font-size: 0.7rem; font-weight: 800; transition: all 0.3s; border: 1px solid var(--border);
+        }
+        .pill-counter.done { background: var(--accent-green); color: white; border-color: transparent; }
+
+        /* --- MAP --- */
+        #map { width: 100%; height: 100%; }
+
+        /* --- CUSTOM PIN MARKERS --- */
+        .pin-marker {
+            width: 28px; height: 28px; border-radius: 50%; color: white;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 13px; font-weight: 800; border: 2px solid rgba(255,255,255,0.8);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5); transition: all 0.2s;
+        }
+        .pin-marker.next {
+            width: 38px; height: 38px; border-width: 3px; border-color: white;
+            animation: pin-pulse 1.5s infinite; z-index: 10;
+        }
+        @keyframes pin-pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.6); }
+            70% { transform: scale(1.1); box-shadow: 0 0 0 12px rgba(59, 130, 246, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+        }
+
+        .user-location-pulse {
+            width: 20px; height: 20px; background: rgba(59, 130, 246, 0.4);
+            border-radius: 50%; position: absolute; left: 50%; top: 50%;
+            transform: translate(-50%, -50%); animation: user-pulse 2s infinite;
+        }
+        .user-location-dot {
+            width: 16px; height: 16px; background: #3b82f6; 
+            border: 3px solid white; border-radius: 50%;
+            position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+        @keyframes user-pulse {
+            0% { width: 16px; height: 16px; opacity: 1; }
+            100% { width: 60px; height: 60px; opacity: 0; }
+        }
+
+        /* --- BOTTOM PANEL --- */
+        #panel {
+            position: fixed; bottom: 0; left: 0; width: 100%;
+            background: rgba(26, 26, 26, 0.95); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            border-radius: 28px 28px 0 0; border: 1px solid var(--border);
+            box-shadow: 0 -8px 32px rgba(0,0,0,0.4); transition: height 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 2000; overflow: hidden; display: flex; flex-direction: column;
+        }
+        #panel.collapsed { height: 32px; }
+        #panel.compressed { height: 140px; }
+        #panel.expanded { height: 60vh; } /* 40% map visible constant */
+
+        .handle { width: 100%; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
+        .handle::after { content: ''; width: 40px; height: 4px; background: var(--border); border-radius: 10px; }
+
+        .panel-content { padding: 0 20px 20px; flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+        
+        .progress-container { margin-bottom: 16px; }
+        .progress-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+        .progress-title { font-size: 0.7rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+        .progress-bar-bg { width: 100%; height: 6px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+        .progress-bar-fill { height: 100%; background: var(--accent-green); width: 0%; transition: width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+        #scroll-area { 
+            flex: 1; overflow-y: auto; padding-top: 4px; 
+            -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+        }
+        .section-label { font-size: 0.65rem; font-weight: 900; color: var(--accent-blue); margin: 16px 0 10px; text-transform: uppercase; letter-spacing: 1px; }
+
+        /* --- CARDS --- */
+        .card {
+            background: var(--surface); border-radius: 16px; padding: 14px;
+            margin-bottom: 12px; border: 1px solid var(--border);
+            display: flex; gap: 14px; transition: transform 0.2s, background 0.2s; position: relative;
+        }
+        .card:active { transform: scale(0.98); background: var(--surface2); }
+        .card.next { border-left: 5px solid var(--accent-blue); box-shadow: 0 4px 15px rgba(59, 130, 246, 0.15); }
+
+        .card-badge {
+            width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 14px; color: white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        .card-info { flex: 1; min-width: 0; }
+        .card-name { font-size: 1.05rem; font-weight: 800; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+        .card-addr { font-size: 0.75rem; color: var(--muted); margin-bottom: 6px; }
+        .card-dist { font-size: 0.8rem; font-weight: 800; color: var(--accent-blue); margin-bottom: 8px; }
+        .card-note-preview { font-size: 0.75rem; color: var(--accent-violet); font-style: italic; margin-bottom: 10px; }
+
+        .card-actions { display: flex; gap: 8px; align-items: center; padding-top: 10px; border-top: 1px solid var(--border); }
+        .btn-status {
+            flex: 1; border: none; border-radius: 10px; font-weight: 900; font-size: 11px; 
+            min-height: 44px; display: flex; align-items: center; justify-content: center;
+            background: var(--surface2); color: var(--muted); transition: all 0.2s;
+        }
+        .btn-status.ok { color: var(--accent-green); }
+        .btn-status.maybe { color: var(--accent-yellow); }
+        .btn-status.no { color: var(--accent-red); }
+        .btn-status.active.ok { background: var(--accent-green); color: white; }
+        .btn-status.active.maybe { background: var(--accent-yellow); color: white; }
+        .btn-status.active.no { background: var(--accent-red); color: white; }
+        
+        .btn-circle {
+            width: 44px; height: 44px; border-radius: 50%; border: none;
+            background: var(--surface2); color: var(--muted); display: flex; align-items: center; justify-content: center;
+            font-size: 1.2rem; transition: background 0.2s;
+        }
+        .btn-circle.has-note { background: var(--accent-blue); color: white; }
+
+        /* --- MODAL --- */
+        #modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); z-index: 3000; display: none; opacity: 0; transition: opacity 0.3s;
+        }
+        #modal {
+            position: fixed; bottom: 0; left: 0; width: 100%;
+            background: var(--surface); border-radius: 28px 28px 0 0;
+            padding: 24px; z-index: 3100; transform: translateY(100%);
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        #modal h3 { margin: 0 0 18px; font-weight: 900; font-size: 1.2rem; }
+        #note-text {
+            width: 100%; height: 140px; border-radius: 14px; border: 2px solid var(--border);
+            background: var(--bg); color: var(--text);
+            padding: 14px; font-family: inherit; font-size: 1rem; resize: none; margin-bottom: 20px; outline: none;
+        }
+        #note-text:focus { border-color: var(--accent-blue); }
+        .modal-buttons { display: flex; gap: 14px; }
+        .btn-main {
+            flex: 1; padding: 16px; border-radius: 14px; border: none;
+            font-weight: 900; font-size: 1rem; cursor: pointer; transition: transform 0.2s;
+            min-height: 48px;
+        }
+        .btn-main:active { transform: scale(0.96); }
+        .btn-main.primary { background: var(--accent-blue); color: white; }
+        .btn-main.secondary { background: var(--surface2); color: var(--text); }
+
+        /* --- TOAST --- */
+        #toast {
+            position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%) translateY(100px);
+            background: #ffffff; color: #000000; padding: 12px 24px;
+            border-radius: 30px; font-size: 14px; font-weight: 800; z-index: 4000;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        #toast.visible { transform: translateX(-50%) translateY(0); }
+
+        /* --- USER OVERLAY (LOGIN) --- */
+        #login-overlay {
+            position: fixed; inset: 0; background: var(--bg); z-index: 9999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            text-align: center; padding: 32px;
+        }
+        .login-card {
+            background: var(--surface); padding: 40px 32px; border-radius: 32px;
+            border: 1px solid var(--border); max-width: 340px; width: 100%;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        }
+        .login-card h1 { font-size: 2.2rem; font-weight: 950; line-height: 1; margin-bottom: 12px; }
+        .login-card p { color: var(--muted); margin-bottom: 40px; font-size: 0.95rem; line-height: 1.5; }
+        .btn-google {
+            background: white; color: black; border: none; padding: 18px 24px; border-radius: 14px;
+            font-weight: 800; font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+            gap: 12px; width: 100%; transition: transform 0.2s;
+        }
+        .btn-google:active { transform: scale(0.97); }
+
+        /* --- FAB --- */
+        #fab {
+            position: fixed; right: 20px; bottom: 155px;
+            width: 54px; height: 54px; border-radius: 50%; background: var(--surface);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.3); border: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: center; z-index: 1500;
+            font-size: 1.5rem; transition: bottom 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        #panel.expanded ~ #fab { bottom: 62vh; }
+        #panel.collapsed ~ #fab { bottom: 50px; }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.6; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .toggle-btn {
+            background: var(--surface2); border: none; border-radius: 12px; padding: 8px 14px;
+            font-size: 0.7rem; font-weight: 900; color: var(--muted); transition: 0.2s;
+            min-height: 36px;
+        }
+        .toggle-btn.active { background: var(--accent-blue); color: white; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="logo">
+        <span><span style="color:var(--accent-blue)">BARBERIA</span> ROAD TRIP</span>
+        <span>Navigator Pro v4.0</span>
+    </div>
+    
+    <div class="status-pills">
+        <div id="dot" class="dot"></div>
+        <div id="acc" class="acc-text">GPS OFF</div>
+        <div id="counter" class="pill-counter">0/0 ✓</div>
+    </div>
+
+    <div id="auth-section" style="display: flex; align-items: center; gap: 8px;">
+        <button id="login-btn" class="toggle-btn active">ENTRAR</button>
+        <div id="user-info" style="display:none; align-items: center; gap: 6px;">
+            <span id="user-name" style="font-size: 0.7rem; font-weight: 900; color: var(--accent-green);"></span>
+            <button id="logout-btn" class="btn-circle" style="width: 28px; height: 28px; font-size: 11px; cursor: pointer;">✕</button>
+        </div>
+        <button id="toggle-visited" class="btn-circle" style="width:34px; height:34px; font-size:16px;">👁️</button>
+    </div>
+</header>
+
+<div id="login-overlay">
+    <div class="login-card">
+        <h1>BARBERÍA<br><span style="color:var(--accent-blue)">ROAD TRIP</span></h1>
+        <p>Optimiza tus rutas de preventa. Sincroniza tus visitas, notas y clientes en tiempo real.</p>
+        <button id="main-login-btn" class="btn-google">
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="20" height="20">
+            Continuar con Google
+        </button>
+    </div>
+</div>
+
+<div id="map"></div>
+
+<div id="panel" class="compressed">
+    <div class="handle" id="handle"></div>
+    <div class="panel-content">
+        <div class="progress-container">
+            <div class="progress-header">
+                <div class="progress-title" id="p-title">Calculando ruta...</div>
+            </div>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" id="p-fill"></div></div>
+        </div>
+
+        <div id="scroll-area">
+            <div class="section-label">👉 Próxima Parada</div>
+            <div id="next-visit"></div>
+            
+            <div class="section-label">📍 Hoja de Ruta</div>
+            <div id="card-list"></div>
+        </div>
+    </div>
+</div>
+
+<div id="fab">📍</div>
+
+<div id="modal-overlay" onclick="closeNote()"></div>
+<div id="modal">
+    <h3 id="modal-name">Nombre Local</h3>
+    <textarea id="note-text" placeholder="Escribe notas sobre la visita, pedidos, etc..."></textarea>
+    <div class="modal-buttons">
+        <button class="btn-main secondary" onclick="closeNote()">Cerrar</button>
+        <button class="btn-main primary" onclick="saveNote()">Guardar Nota</button>
+    </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- FIREBASE SDKS -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, collection, getDocs, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    // --- CONFIGURACIÓN FIREBASE ---
+    const FIREBASE_CONFIG = {
+      apiKey: "AIzaSyAroq-GZHi_JKaQfEVuJD7WojadS45-LY0",
+      authDomain: "gen-lang-client-0321571558.firebaseapp.com",
+      projectId: "gen-lang-client-0321571558",
+      storageBucket: "gen-lang-client-0321571558.firebasestorage.app",
+      messagingSenderId: "700684012678",
+      appId: "1:700684012678:web:a708d2e866d931c50c9507"
+    };
+
+    // Validar configuración
+    const isFirebaseConfigured = Object.values(FIREBASE_CONFIG).every(v => v !== "");
+    const FIRESTORE_DB_ID = "ai-studio-bf2b1214-075f-40f6-8720-0e7838a7f09c";
+
+    // --- CONSTANTES ---
+    const BATCH_SIZE = 15;
+    const GPS_ACCURACY_THRESHOLD = 80;
+    const GPS_FALLBACK_TIMEOUT = 8000;
+    const PLACES_THROTTLE = 10000;
+
+    // --- DATOS INICIALES (250 LOCALES) ---
+    const RAW_INITIAL_DATA = [
+        { name: "The Blade Studio", addr: "Av. Santa Fe 1842", lat: -34.5935, lng: -58.3955, type: 'barbershop' },
+        { name: "Glamour & Estilo", addr: "Callao 540", lat: -34.6015, lng: -58.3925, type: 'hairdresser' },
+        { name: "La Epoca Barbershop", addr: "Av. Pueyrredón 1230", lat: -34.5955, lng: -58.4014, type: 'barbershop' },
+        { name: "Vintage Cut Club", addr: "Santa Fe 2100", lat: -34.5942, lng: -58.3985, type: 'barbershop' },
+        { name: "Styling Hair Concept", addr: "Junín 1450", lat: -34.5948, lng: -58.3952, type: 'hairdresser' }
+    ];
+
+    const nbCities = [
+        { center: { lat: -34.57, lng: -58.42 } }, { center: { lat: -34.59, lng: -58.39 } },
+        { center: { lat: -34.61, lng: -58.40 } }, { center: { lat: -34.60, lng: -58.38 } }
+    ];
+    const shopNames = ["Corte & Barba", "Salón Buenos Aires", "Estilo Urbano", "La Tijera de Oro", "Arte en Cabello", "Navaja & Peine", "Urban Cut", "Trendy Hair", "Peluquería VIP", "Mundo Estético"];
+    const streetNames = ["Av. Santa Fe", "Av. Córdoba", "Av. Corrientes", "Av. Callao", "Aguero", "Guatemala", "Honduras", "Paraguay", "Arenales", "Juncal"];
+
+    for(let i = 0; i < 245; i++) {
+        const nb = nbCities[i % nbCities.length];
+        const lat = nb.center.lat + (Math.random() - 0.5) * 0.035;
+        const lng = nb.center.lng + (Math.random() - 0.5) * 0.035;
+        RAW_INITIAL_DATA.push({
+            name: shopNames[Math.floor(Math.random() * shopNames.length)] + " #" + (i + 6),
+            addr: streetNames[Math.floor(Math.random() * streetNames.length)] + " " + (Math.floor(Math.random() * 4500) + 101),
+            lat, lng,
+            type: i % 2 === 0 ? 'barbershop' : 'hairdresser'
+        });
+    }
+
+    // --- ESTADO GLOBAL ---
+    let map, directionsService, placesService;
+    let markers = [], polylines = [], userMarker, userAccCircle;
+    
+    let state = {
+        userLoc: null, userAcc: 0,
+        raw: [...RAW_INITIAL_DATA],
+        statuses: {}, notes: {}, 
+        showVisited: true,
+        panelState: 'compressed',
+        routeOrder: [],
+        lastSearchTime: 0,
+        userId: null,
+        sessionStartTime: Date.now(),
+        lastMapMoveTime: Date.now()
+    };
+
+    // --- FIREBASE LOGIC ---
+    let app, auth, db;
+
+    if (!isFirebaseConfigured) {
+        const banner = document.createElement('div');
+        banner.style = "position:fixed; top:70px; left:20px; right:20px; background:var(--accent-red); color:white; padding:15px; border-radius:12px; z-index:5000; font-size:12px; font-weight:700; box-shadow:0 10px 30px rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.2); text-align:center;";
+        banner.innerText = "Configurá Firebase: abrí el HTML, buscá FIREBASE_CONFIG y completá los 6 campos con los datos de tu proyecto en console.firebase.google.com";
+        document.body.appendChild(banner);
+    } else {
+        app = initializeApp(FIREBASE_CONFIG);
+        auth = getAuth(app);
+        db = getFirestore(app, FIRESTORE_DB_ID);
+    }
+    const getSessionId = () => new Date().toISOString().split('T')[0];
+
+    async function handleLogin() {
+        if (!isFirebaseConfigured) return showToast("⚠ Modo local activo");
+        const provider = new GoogleAuthProvider();
+        try { await signInWithPopup(auth, provider); } catch (err) { console.error(err); showToast("❌ Error al iniciar sesión"); }
+    }
+
+    async function handleLogout() {
+        if (!isFirebaseConfigured) return location.reload();
+        try {
+            await signOut(auth);
+            location.reload();
+        } catch (err) { console.error(err); }
+    }
+
+    function updateAuthUI(user) {
+        const overlay = document.getElementById('login-overlay');
+        const userInfo = document.getElementById('user-info');
+        const loginBtn = document.getElementById('login-btn');
+        const userName = document.getElementById('user-name');
+
+        if (user) {
+            overlay.style.display = 'none';
+            userInfo.style.display = 'flex';
+            loginBtn.style.display = 'none';
+            userName.innerText = user.displayName ? user.displayName.split(' ')[0] : 'Admin';
+            state.userId = user.uid;
+            startSync();
+        } else {
+            overlay.style.display = isFirebaseConfigured ? 'flex' : 'none';
+            userInfo.style.display = 'none';
+            loginBtn.style.display = 'inline';
+            if (!isFirebaseConfigured) {
+                loginBtn.innerText = "MODO LOCAL";
+                startSync();
+            }
+            state.userId = null;
+        }
+    }
+
+    if (isFirebaseConfigured) {
+        onAuthStateChanged(auth, updateAuthUI);
+    } else {
+        updateAuthUI(null);
+    }
+
+    let syncUnsubscribe = null;
+    async function startSync() {
+        if (!isFirebaseConfigured) {
+            state.statuses = JSON.parse(localStorage.getItem('brt_statuses') || '{}');
+            state.notes = JSON.parse(localStorage.getItem('brt_notes') || '{}');
+            recalculateRoute();
+            showToast("💾 Datos locales cargados");
+            return;
+        }
+        if (!state.userId) return;
+        if (syncUnsubscribe) syncUnsubscribe();
+        
+        const sessionPath = `users/${state.userId}/sessions/${getSessionId()}`;
+        syncUnsubscribe = onSnapshot(doc(db, sessionPath), (snap) => {
+            if(snap.exists()) {
+                const data = snap.data();
+                state.statuses = data.statuses || {};
+                state.notes = data.notes || {};
+                recalculateRoute();
+            }
+        });
+
+        const localesSnap = await getDocs(collection(db, `users/${state.userId}/locales`));
+        localesSnap.forEach(d => {
+            const loc = d.data();
+            if(!state.raw.some(r => r.place_id === d.id)) state.raw.push({ ...loc, place_id: d.id });
+        });
+        recalculateRoute();
+        showToast("☁️ Nube sincronizada");
+    }
+
+    async function syncSessionUpdate() {
+        if (!isFirebaseConfigured) {
+            localStorage.setItem('brt_statuses', JSON.stringify(state.statuses));
+            localStorage.setItem('brt_notes', JSON.stringify(state.notes));
+            return;
+        }
+        if(!state.userId) return;
+        const sessionPath = `users/${state.userId}/sessions/${getSessionId()}`;
+        await setDoc(doc(db, sessionPath), {
+            statuses: state.statuses,
+            notes: state.notes,
+            updatedAt: serverTimestamp()
+        }, { merge: true });
+    }
+
+    // --- MAPS ---
+    function initMap() {
+        map = new google.maps.Map(document.getElementById("map"), {
+            zoom: 16,
+            center: { lat: -34.5955, lng: -58.4014 },
+            disableDefaultUI: true,
+            styles: [
+                { featureType: "all", elementType: "labels.text.fill", stylers: [{ color: "#ffffff" }] },
+                { featureType: "all", elementType: "labels.text.stroke", stylers: [{ visibility: "on" }, { color: "#000000" }, { weight: 2 }] },
+                { featureType: "all", elementType: "geometry", stylers: [{ color: "#2a2a2a" }] },
+                { featureType: "water", stylers: [{ color: "#000000" }] },
+                { featureType: "poi", stylers: [{ visibility: "off" }] }
+            ],
+            gestureHandling: "greedy"
+        });
+
+        window.CustomMarker = function(latLng, map, args) { this.latLng = latLng; this.args = args; this.setMap(map); };
+        window.CustomMarker.prototype = Object.create(google.maps.OverlayView.prototype);
+        window.CustomMarker.prototype.onAdd = function() {
+            const div = document.createElement('div');
+            div.style.position = 'absolute';
+            div.innerHTML = `<div class="pin-marker ${this.args.isNext ? 'next' : ''}" style="background: ${this.args.color};">${this.args.label}</div>`;
+            div.onclick = () => this.args.onClick();
+            this.div = div;
+            this.getPanes().overlayMouseTarget.appendChild(div);
+        };
+        window.CustomMarker.prototype.draw = function() {
+            const pos = this.getProjection().fromLatLngToDivPixel(this.latLng);
+            this.div.style.left = (pos.x - (this.args.isNext ? 19 : 14)) + 'px';
+            this.div.style.top = (pos.y - (this.args.isNext ? 19 : 14)) + 'px';
+        };
+        window.CustomMarker.prototype.onRemove = function() { if(this.div) this.div.remove(); };
+
+        directionsService = new google.maps.DirectionsService();
+        placesService = new google.maps.places.PlacesService(map);
+
+        recalculateRoute();
+        startGPS();
+        initControls();
+        
+        map.addListener('center_changed', () => state.lastMapMoveTime = Date.now());
+        map.addListener('idle', () => searchPlaces(map.getCenter()));
+    }
+    window.initMap = initMap;
+
+    // --- GPS ---
+    function startGPS() {
+        const dot = document.getElementById('dot');
+        const accText = document.getElementById('acc');
+        
+        navigator.geolocation.watchPosition(
+            (pos) => {
+                const acc = Math.round(pos.coords.accuracy);
+                if (acc > GPS_ACCURACY_THRESHOLD) {
+                    accText.innerHTML = `±${acc}m <span style="color:var(--accent-red)">(Inexacto)</span>`;
+                    return;
+                }
+                const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                state.userAcc = acc;
+                accText.innerHTML = `GPS: ±${acc}m`;
+                dot.className = acc <= 20 ? "dot fine" : (acc <= 50 ? "dot ok" : "dot searching");
+                
+                const distMoved = state.userLoc ? google.maps.geometry.spherical.computeDistanceBetween(new google.maps.LatLng(loc), new google.maps.LatLng(state.userLoc)) : Infinity;
+                if(distMoved > 10) {
+                    state.userLoc = loc;
+                    recalculateRoute();
+                } else {
+                    state.userLoc = loc;
+                }
+                updateUserMarker();
+            },
+            (err) => { dot.className = "dot error"; accText.innerText = "GPS Error"; fetchIPFallback(); },
+            { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+        );
+    }
+
+    function fetchIPFallback() {
+        fetch('https://ipapi.co/json/').then(r => r.json()).then(data => {
+            if(!state.userLoc) {
+                state.userLoc = { lat: data.latitude, lng: data.longitude };
+                recalculateRoute(); updateUserMarker();
+            }
+        });
+    }
+
+    function updateUserMarker() {
+        if(!state.userLoc) return;
+        const latLng = new google.maps.LatLng(state.userLoc);
+        if(!userMarker) {
+            userMarker = new google.maps.Marker({ position: latLng, map, icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 } });
+            const overlay = new google.maps.OverlayView();
+            overlay.onAdd = function() {
+                const div = document.createElement('div');
+                div.innerHTML = `<div class="user-location-pulse"></div><div class="user-location-dot"></div>`;
+                div.style.position = 'absolute';
+                this.getPanes().overlayMouseTarget.appendChild(div);
+                this.div = div;
+            };
+            overlay.draw = function() {
+                const pos = this.getProjection().fromLatLngToDivPixel(latLng);
+                this.div.style.left = pos.x + 'px'; this.div.style.top = pos.y + 'px';
+            };
+            overlay.setMap(map);
+            userAccCircle = new google.maps.Circle({ map, strokeColor: "#3b82f6", strokeOpacity: 0.2, strokeWeight: 1, fillColor: "#3b82f6", fillOpacity: 0.1 });
+        }
+        userMarker.setPosition(latLng);
+        userAccCircle.setCenter(latLng);
+        userAccCircle.setRadius(state.userAcc);
+    }
+
+    // --- PLACES ---
+    async function searchPlaces(center) {
+        if (Date.now() - state.lastSearchTime < PLACES_THROTTLE || (!state.userId && isFirebaseConfigured) || !placesService) return;
+        state.lastSearchTime = Date.now();
+        
+        placesService.nearbySearch({ location: center, radius: 1500, type: ['hair_care'] }, (res, status) => {
+            if(status !== 'OK') return;
+            let newFound = 0;
+            res.forEach(place => {
+                const alreadyExists = state.raw.some(r => r.place_id === place.place_id || google.maps.geometry.spherical.computeDistanceBetween(place.geometry.location, new google.maps.LatLng(r.lat, r.lng)) < 30);
+                if(!alreadyExists) {
+                    const newLoc = {
+                        name: place.name, addr: place.vicinity, 
+                        lat: place.geometry.location.lat(), lng: place.geometry.location.lng(),
+                        type: place.name.toLowerCase().includes('barber') ? 'barbershop' : 'hairdresser',
+                        place_id: place.place_id, source: 'places_api'
+                    };
+                    state.raw.push(newLoc);
+                    newFound++;
+                    if (isFirebaseConfigured && state.userId) {
+                        setDoc(doc(db, `users/${state.userId}/locales`, place.place_id), newLoc, { merge: true });
+                    }
+                }
+            });
+            if(newFound > 0) { showToast(`✨ ${newFound} locales nuevos`); recalculateRoute(); }
+        });
+    }
+
+    // --- ROUTE & RENDER ---
+    function recalculateRoute() {
+        if (!window.google || !map) return;
+        
+        const pending = state.raw.map((r, i) => i).filter(i => !state.statuses[i]);
+        if(pending.length === 0) { state.routeOrder = []; render(); return; }
+
+        let curr = state.userLoc || { lat: -34.5955, lng: -58.4014 };
+        let sorted = [];
+        let pool = [...pending];
+
+        while(pool.length > 0) {
+            let near = null, minDist = Infinity, poolIdx = -1;
+            pool.forEach((rawIdx, i) => {
+                const r = state.raw[rawIdx];
+                const d = google.maps.geometry.spherical.computeDistanceBetween(new google.maps.LatLng(curr), new google.maps.LatLng(r.lat, r.lng));
+                if(d < minDist) { minDist = d; near = rawIdx; poolIdx = i; }
+            });
+            sorted.push(near);
+            curr = { lat: state.raw[near].lat, lng: state.raw[near].lng };
+            pool.splice(poolIdx, 1);
+        }
+        state.routeOrder = sorted;
+        fetchWalkingRoute();
+        render();
+    }
+
+    async function fetchWalkingRoute() {
+        if (!directionsService) return;
+        polylines.forEach(p => p.setMap(null));
+        polylines = [];
+        if(state.routeOrder.length === 0) return;
+        
+        const limit = 22;
+        const sub = state.routeOrder.slice(0, limit);
+        const start = state.userLoc || { lat: -34.5955, lng: -58.4014 };
+        
+        directionsService.route({
+            origin: start,
+            destination: { lat: state.raw[sub[sub.length-1]].lat, lng: state.raw[sub[sub.length-1]].lng },
+            waypoints: sub.slice(0, -1).map(i => ({ location: { lat: state.raw[i].lat, lng: state.raw[i].lng }, stopover: true })),
+            travelMode: 'WALKING'
+        }, (result, status) => {
+            if(status === 'OK') {
+                let mins = 0; result.routes[0].legs.forEach(l => mins += l.duration.value);
+                const pTitle = document.getElementById('p-title');
+                const visited = Object.keys(state.statuses).length;
+                pTitle.innerText = `Ruta: ~${Math.round(mins/60)} min • Pendientes (${state.routeOrder.length}) • Visitadas (${visited})`;
+                document.getElementById('p-fill').style.width = (visited / (state.raw.length||1) * 100) + '%';
+                polylines.push(new google.maps.Polyline({ path: result.routes[0].overview_path, strokeColor: "#3b82f6", strokeOpacity: 0.7, strokeWeight: 6, map }));
+            }
+        });
+    }
+
+    function render() {
+        if (!window.google || !map || !window.CustomMarker) return;
+        markers.forEach(m => m.setMap(null));
+        markers = [];
+        state.raw.forEach((r, i) => {
+            if(!state.showVisited && state.statuses[i]) return;
+            const isNext = state.routeOrder[0] === i;
+            const orderIdx = state.routeOrder.indexOf(i);
+            const color = state.statuses[i] ? getStatusColor(state.statuses[i]) : (r.type === 'barbershop' ? '#3b82f6' : '#a855f7');
+            const label = state.statuses[i] ? getStatusEmoji(state.statuses[i]) : (orderIdx >= 0 ? orderIdx + 1 : '');
+            
+            markers.push(new CustomMarker(new google.maps.LatLng(r.lat, r.lng), map, {
+                color, label, isNext, onClick: () => {
+                    map.panTo({ lat: r.lat, lng: r.lng });
+                    const card = document.getElementById(`card-${i}`);
+                    if(card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    setPanelState('expanded');
+                }
+            }));
+        });
+
+        const nextVisit = document.getElementById('next-visit');
+        const cardList = document.getElementById('card-list');
+        nextVisit.innerHTML = ''; cardList.innerHTML = '';
+        
+        if(state.routeOrder.length > 0) nextVisit.appendChild(createCard(state.routeOrder[0], true));
+        state.routeOrder.slice(1).forEach(idx => cardList.appendChild(createCard(idx, false)));
+        if(state.showVisited) {
+            Object.keys(state.statuses).forEach(idx => {
+                if(!state.routeOrder.includes(parseInt(idx))) cardList.appendChild(createCard(parseInt(idx), false));
+            });
+        }
+        updateCounter();
+    }
+
+    function createCard(idx, isNext) {
+        const item = state.raw[idx];
+        const status = state.statuses[idx];
+        const note = state.notes[idx];
+        const card = document.createElement('div');
+        card.className = `card ${isNext ? 'next' : ''}`;
+        card.id = `card-${idx}`;
+        card.onclick = (e) => { if(!e.target.closest('button')) map.panTo({ lat: item.lat, lng: item.lng }); };
+        
+        const badgeColor = status ? getStatusColor(status) : (item.type === 'barbershop' ? '#3b82f6' : '#a855f7');
+        const orderIdx = state.routeOrder.indexOf(idx);
+        const label = status ? getStatusEmoji(status) : (orderIdx >= 0 ? orderIdx + 1 : '');
+        
+        card.innerHTML = `
+            <div class="card-badge" style="background: ${badgeColor}">${label}</div>
+            <div class="card-info">
+                <div class="card-name">${item.name}</div>
+                <div class="card-addr">${item.addr}</div>
+                ${note ? `<div class="card-note-preview">💬 "${truncate(note, 30)}"</div>` : ''}
+                <div class="card-actions">
+                    <button class="btn-status ok ${status === 'ok' ? 'active' : ''}" onclick="window.toggleStatus(${idx}, 'ok')">✓ OK</button>
+                    <button class="btn-status maybe ${status === 'maybe' ? 'active' : ''}" onclick="window.toggleStatus(${idx}, 'maybe')">? DUDA</button>
+                    <button class="btn-status no ${status === 'no' ? 'active' : ''}" onclick="window.toggleStatus(${idx}, 'no')">✗ NO</button>
+                    <button class="btn-circle ${note ? 'has-note' : ''}" onclick="window.openNote(${idx})">💬</button>
+                </div>
+            </div>
+        `;
+        return card;
+    }
+
+    window.toggleStatus = async (idx, s) => {
+        if(state.statuses[idx] === s) delete state.statuses[idx]; else state.statuses[idx] = s;
+        await syncSessionUpdate();
+        recalculateRoute();
+        if(state.routeOrder.length > 0) {
+            const next = state.raw[state.routeOrder[0]];
+            map.panTo({ lat: next.lat, lng: next.lng });
+            showToast(`👉 Siguiente: ${next.name}`);
+        }
+    };
+
+    window.openNote = (idx) => {
+        state.activeNoteIdx = idx;
+        const modal = document.getElementById('modal');
+        const overlay = document.getElementById('modal-overlay');
+        document.getElementById('modal-name').innerText = state.raw[idx].name;
+        document.getElementById('note-text').value = state.notes[idx] || '';
+        overlay.style.display = 'block';
+        
+        if(window.visualViewport) {
+            const h = () => modal.style.bottom = (window.innerHeight - window.visualViewport.height) + 'px';
+            window.visualViewport.addEventListener('resize', h);
+            state.viewH = h; h();
+        }
+        setTimeout(() => { overlay.style.opacity = '1'; modal.style.transform = 'translateY(0)'; }, 10);
+    };
+
+    window.closeNote = () => {
+        const modal = document.getElementById('modal');
+        const overlay = document.getElementById('modal-overlay');
+        overlay.style.opacity = '0'; modal.style.transform = 'translateY(100%)';
+        if(state.viewH) window.visualViewport.removeEventListener('resize', state.viewH);
+        setTimeout(() => overlay.style.display = 'none', 350);
+    };
+
+    window.saveNote = async () => {
+        const t = document.getElementById('note-text').value.trim();
+        if(t) state.notes[state.activeNoteIdx] = t; else delete state.notes[state.activeNoteIdx];
+        await syncSessionUpdate(); closeNote(); render();
+    };
+
+    function initControls() {
+        document.getElementById('handle').onclick = () => {
+            if(state.panelState === 'collapsed') setPanelState('compressed');
+            else if(state.panelState === 'compressed') setPanelState('expanded');
+            else setPanelState('collapsed');
+        };
+        document.getElementById('login-btn').onclick = handleLogin;
+        document.getElementById('main-login-btn').onclick = handleLogin;
+        document.getElementById('logout-btn').onclick = handleLogout;
+        document.getElementById('toggle-visited').onclick = () => {
+            state.showVisited = !state.showVisited;
+            document.getElementById('toggle-visited').style.color = state.showVisited ? 'var(--accent-blue)' : 'var(--muted)';
+            render();
+        };
+        document.getElementById('fab').onclick = () => { if(state.userLoc) map.panTo(state.userLoc); };
+    }
+
+    function setPanelState(s) { state.panelState = s; document.getElementById('panel').className = s; }
+    function getStatusColor(s) { return { ok: 'var(--accent-green)', maybe: 'var(--accent-yellow)', no: 'var(--accent-red)' }[s]; }
+    function getStatusEmoji(s) { return { ok: '✓', maybe: '~', no: '✗' }[s]; }
+    function truncate(s, n) { return s.length > n ? s.substr(0, n-1) + '...' : s; }
+    function showToast(m) { const t = document.getElementById('toast'); t.innerText = m; t.classList.add('visible'); setTimeout(() => t.classList.remove('visible'), 3000); }
+    function updateCounter() {
+        const visited = Object.keys(state.statuses).length;
+        const pill = document.getElementById('counter');
+        pill.innerText = `${visited}/${state.raw.length} ✓`;
+        pill.classList.toggle('done', visited === state.raw.length);
+    }
+</script>
+
+<!-- REEMPLAZAR 'TU_MAPS_API_KEY' por tu clave real para producción -->
+<script src="https://maps.googleapis.com/maps/api/js?key=TU_MAPS_API_KEY&libraries=geometry,places&callback=initMap" async defer></script>
+</body>
+</html>

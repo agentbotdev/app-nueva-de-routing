@@ -1,0 +1,8 @@
+{
+  "name": "Barber Route Pro",
+  "description": "Gestión de ruta de ventas para barberías y peluquerías en Buenos Aires con ruteo real por calles.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": []
+}
